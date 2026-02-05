@@ -1,8 +1,7 @@
-
-server-completo.js
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const https = require('https');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -18,9 +17,65 @@ app.use((req, res, next) => {
 });
 
 // Health check
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Lovable Proxy Server',
+    timestamp: new Date().toISOString() 
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Função para fazer requisição HTTPS manualmente
+function makeHttpsRequest(url, options, body) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+
+    const reqOptions = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: options.method || 'POST',
+      headers: options.headers || {}
+    };
+
+    const req = https.request(reqOptions, (res) => {
+      let data = '';
+
+      // Se for streaming
+      if (res.headers['content-type']?.includes('text/event-stream') || 
+          res.headers['content-type']?.includes('text/plain')) {
+        resolve({ stream: res, headers: res.headers, status: res.statusCode });
+        return;
+      }
+
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      res.on('end', () => {
+        resolve({ 
+          data: data, 
+          headers: res.headers, 
+          status: res.statusCode 
+        });
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+
+    if (body) {
+      req.write(body);
+    }
+
+    req.end();
+  });
+}
 
 // Proxy para Lovable com suporte a STREAMING
 app.post('/api/lovable-proxy', async (req, res) => {
@@ -29,43 +84,5 @@ app.post('/api/lovable-proxy', async (req, res) => {
 
     // Validações
     if (!projectId) {
-      return res.status(400).json({
-        success: false,
-        error: 'projectId é obrigatório'
-      });
-    }
-
-    if (!token) {
-      return res.status(400).json({
-        success: false,
-        error: 'token é obrigatório'
-      });
-    }
-
-    console.log(`[PROXY] Requisição para projeto: ${projectId}`);
-    console.log(`[PROXY] Body:`, JSON.stringify(requestBody).substring(0, 200));
-
-    // Construir URL do Lovable
-    const lovableUrl = `https://api.lovable.dev/projects/${projectId}/chat`;
-
-    // Preparar headers
-    const headers = {
-      'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Accept': '*/*',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Origin': 'https://lovable.dev',
-      'Referer': 'https://lovable.dev/'
-    };
-
-    // Fazer requisição ao Lovable
-    const lovableResponse = await fetch(lovableUrl, {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(requestBody || {}),
-    });
-
-    console.log(`[PROXY] Status da resposta: ${lovableResponse.status}`);
-    console.log(`[PROXY] Content-Type: ${lovableResponse.headers.get('content-type')}`);
-
-    // Verifica
+      return res.stat
+      

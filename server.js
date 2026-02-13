@@ -14,7 +14,7 @@ app.use(cors()); // Habilita CORS para todas as rotas
 app.use(express.json()); // Habilita o parse do corpo da requisição como JSON
 
 // ✅ CORREÇÃO 2: Rota principal do proxy ajustada para /api/lovable-proxy
-app.post('/api/lovable-proxy', async (req, res) => { 
+app.post('/api/lovable-proxy/?', async (req, res) => { 
   try {
     // Extrai os dados do corpo da requisição vinda do n8n
     const { projectId, token, requestBody } = req.body;

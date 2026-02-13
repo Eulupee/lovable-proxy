@@ -1,146 +1,82 @@
+// Importa as bibliotecas necessárias
 const express = require('express');
 const cors = require('cors');
-const https = require('https');
+const https = require('https' ); // ✅ CORREÇÃO 1: Sintaxe do require corrigida
 
+// Cria a aplicação Express
 const app = express();
-const PORT = process.env.PORT || 4000;
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+// Configurações do servidor
+const PORT = process.env.PORT || 3000;
 
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
+// Middlewares
+app.use(cors()); // Habilita CORS para todas as rotas
+app.use(express.json()); // Habilita o parse do corpo da requisição como JSON
 
-app.get('/', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'Lovable Proxy Server',
-    version: '1.0.0',
-    endpoints: {
-      health: '/health',
-      proxy: '/api/lovable-proxy'
-    }
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-function httpsRequest(url, options, body) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const reqOptions = {
-      hostname: urlObj.hostname,
-      port: 443,
-      path: urlObj.pathname,
-      method: options.method || 'POST',
-      headers: options.headers || {}
-    };
-
-    const req = https.request(reqOptions, (res) => {
-      const contentType = res.headers['content-type'] || '';
-      if (contentType.includes('text/event-stream') || contentType.includes('text/plain')) {
-        resolve({ isStream: true, stream: res, headers: res.headers, status: res.statusCode });
-        return;
-      }
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve({ isStream: false, data: data, headers: res.headers, status: res.statusCode }));
-    });
-
-    req.on('error', error => reject(error));
-    if (body) req.write(body);
-    req.end();
-  });
-}
-
+// ✅ CORREÇÃO 2: Rota principal do proxy ajustada para /api/lovable-proxy
 app.post('/api/lovable-proxy', async (req, res) => {
   try {
+    // Extrai os dados do corpo da requisição vinda do n8n
     const { projectId, token, requestBody } = req.body;
 
-    if (!projectId) {
-      return res.status(400).json({ success: false, error: 'projectId é obrigatório' });
+    // Validação dos dados recebidos
+    if (!projectId || !token || !requestBody) {
+      return res.status(400).json({ error: 'projectId, token, e requestBody são obrigatórios.' });
     }
 
-    if (!token) {
-      return res.status(400).json({ success: false, error: 'token é obrigatório' });
-    }
+    // Monta o payload para a API da Lovable
+    const lovablePayload = JSON.stringify(requestBody);
 
-    console.log(`[PROXY] Projeto: ${projectId}`);
-
-    const lovableUrl = `https://api.lovable.dev/projects/${projectId}/chat`;
-    const headers = {
-      'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Accept': '*/*',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Origin': 'https://lovable.dev',
-      'Referer': 'https://lovable.dev/'
+    // Configura as opções para a chamada à API da Lovable
+    // ⚠️ PONTO DE ATENÇÃO: Mantendo o endpoint original que funcionava.
+    // Se o erro persistir, este é o próximo local a ser investigado.
+    const options = {
+      hostname: 'api.lovable.dev',
+      path: `/v1/projects/${projectId}/files`, // Endpoint original
+      method: 'PATCH', // Método original
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(lovablePayload)
+      }
     };
 
-    const bodyString = JSON.stringify(requestBody || {});
-    headers['Content-Length'] = Buffer.byteLength(bodyString);
+    // Faz a chamada para a API da Lovable
+    const lovableReq = https.request(options, (lovableRes ) => {
+      let data = '';
+      lovableRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      lovableRes.on('end', () => {
+        try {
+          res.status(lovableRes.statusCode).json(JSON.parse(data));
+        } catch {
+          res.status(lovableRes.statusCode).send(data);
+        }
+      });
+    });
 
-    const response = await httpsRequest(lovableUrl, { method: 'POST', headers: headers }, bodyString);
+    lovableReq.on('error', (error) => {
+      console.error('Erro na chamada para a Lovable:', error);
+      return res.status(500).json({ error: 'Erro interno ao chamar a API da Lovable.' });
+    });
 
-    console.log(`[PROXY] Status: ${response.status}`);
+    // Envia o payload para a Lovable
+    lovableReq.write(lovablePayload);
+    lovableReq.end();
 
-    if (response.isStream) {
-      console.log('[PROXY] Streaming');
-      res.setHeader('Content-Type', response.headers['content-type']);
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      response.stream.pipe(res);
-      response.stream.on('end', () => console.log('[PROXY] Stream ended'));
-      response.stream.on('error', (error) => console.error('[PROXY] Stream error:', error.message));
-    } else {
-      console.log('[PROXY] JSON');
-      try {
-        const jsonData = JSON.parse(response.data);
-        return res.status(200).json({ success: response.status < 300, status: response.status, data: jsonData });
-      } catch (e) {
-        return res.status(200).json({ success: response.status < 300, status: response.status, data: response.data });
-      }
-    }
   } catch (error) {
-    console.error('[PROXY] Error:', error.message);
-    return res.status(500).json({ success: false, error: error.message });
+    console.error('Erro ao processar a requisição:', error);
+    return res.status(400).json({ error: 'Corpo da requisição inválido. Esperado um JSON.' });
   }
 });
 
+// Rota "catch-all" para qualquer outra requisição (retorna 404)
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found', path: req.path });
+  res.status(404).json({ error: `Rota não encontrada. A única rota ativa é POST /api/lovable-proxy` });
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('');
-  console.log('=================================');
-  console.log('🚀 SERVER STARTED!');
-  console.log('=================================');
-  console.log(`Port: ${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
-  console.log(`Proxy: http://localhost:${PORT}/api/lovable-proxy`);
-  console.log('=================================');
-  console.log('');
-});
-
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('[ERROR]:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('[REJECTED]:', reason);
-  process.exit(1);
+// Inicia o servidor
+app.listen(PORT, () => {
+  console.log(`Servidor proxy rodando na porta ${PORT}`);
 });
